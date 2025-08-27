@@ -16,7 +16,120 @@ from itertools import groupby
 from operator import itemgetter
 from scipy.spatial import ConvexHull
 
+from itertools import groupby
+from operator import itemgetter
 
+def visualize_clusters(points_semantics, colors, semantics_id):
+    # Filter points based on semantics
+    filtered_points_semantics = points_semantics[points_semantics[:, 3] == semantics_id]
+    filtered_colors = colors[points_semantics[:, 3] == semantics_id] 
+
+    # DBSCAN clustering
+    dbscan = DBSCAN(eps=3.5, min_samples=2)
+    labels = dbscan.fit_predict(filtered_points_semantics[:, :3])
+
+    # Generate color table
+    unique_labels = np.unique(labels)
+    label_color_map = {}
+
+    # Assign random color to each label (label -1 = noise gets black)
+    for i, label in enumerate(unique_labels):
+        if label == -1:
+            label_color_map[label] = [0, 0, 0]  # black for noise
+        else:
+            label_color_map[label] = np.random.rand(3)
+
+    # Map each point's label to its color
+    point_colors = np.array([label_color_map[l] for l in labels])
+
+    # Create point cloud
+    pcd = o3d.geometry.PointCloud()
+    recentered_points = filtered_points_semantics[:, :3] - np.mean(filtered_points_semantics[:, :3], axis=0)
+    pcd.points = o3d.utility.Vector3dVector(recentered_points)
+    pcd.colors = o3d.utility.Vector3dVector(point_colors)
+
+    # Visualize
+    o3d.visualization.draw_geometries([pcd],
+        window_name=f'Cluster Number {len(unique_labels)}',
+        width=800, height=600, left=50, top=50)
+
+def get_semantics_xyz_and_indices(points_semantics):
+    """
+    Efficiently group points by semantics ID.
+    Returns:
+    - id_to_xyz: dict {sem_id: Nx3 float array}
+    - id_to_indices: dict {sem_id: global index array}
+    """
+    sorted_idx = np.argsort(points_semantics[:, 3])
+    sorted_points = points_semantics[sorted_idx]
+    sorted_semantics = sorted_points[:, 3]
+    sorted_xyz = sorted_points[:, :3]
+
+    id_to_xyz = {}
+    id_to_indices = {}
+
+    for sem_id, group in groupby(zip(sorted_semantics, sorted_xyz, sorted_idx), key=itemgetter(0)):
+        group = list(group)
+        id_to_xyz[sem_id] = np.array([g[1] for g in group])
+        id_to_indices[sem_id] = np.array([g[2] for g in group])
+
+    return id_to_xyz, id_to_indices
+
+
+def cluster_xyz(xyz, mask_indices, eps, min_samples):
+    """
+    Run DBSCAN clustering for a semantic group.
+    Returns: list of (cluster_indices,) to update.
+    """
+    if len(xyz) < min_samples or len(xyz) > 5_000_000:
+        return []
+
+    dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+    labels = dbscan.fit_predict(xyz)
+
+    cluster_outputs = []
+    for label in np.unique(labels):
+        if label == -1:
+            continue
+        cluster_mask = labels == label
+        cluster_indices = mask_indices[cluster_mask]
+        cluster_outputs.append(cluster_indices)
+
+    return cluster_outputs
+
+def cluster_points_semantics(points_semantics, eps=3.5, min_samples=2, n_jobs=-1, verbose=False):
+    # Group by semantics ID
+    id_to_xyz, id_to_indices = get_semantics_xyz_and_indices(points_semantics)
+    semantics_ids = list(id_to_xyz.keys())
+    max_semantics_id = int(np.max(points_semantics[:, 3]))
+    next_semantics_id = max_semantics_id + 1
+
+    # Run clustering in parallel
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(cluster_xyz)(
+            id_to_xyz[sid], id_to_indices[sid], eps, min_samples
+        ) for sid in tqdm(semantics_ids, desc="Clustering semantics")
+    )
+
+    # Update semantics with new IDs
+    for cluster_list in results:
+        if not cluster_list:
+            continue
+        if (len(cluster_list) > 1) and verbose:
+            semantics_id = points_semantics[cluster_list[0][0], 3]
+            print(f"Warning: More than one cluster found for semantics ID {semantics_id}. This may indicate overlapping clusters.")
+        # if the number of clusters is equal to 1, we can skip the update
+        if len(cluster_list) == 1:
+            continue
+        for idx_group in cluster_list:
+            # if the number of points in the group is less than 3, set semantics to -1
+            if len(idx_group) < 3:
+                points_semantics[idx_group, 3] = -1
+            else:
+                points_semantics[idx_group, 3] = next_semantics_id
+                next_semantics_id += 1
+
+    return points_semantics
 
 def sor_filtering(points_semantics, n_neighbors=10, std_ratio=1.0):
     """
@@ -139,12 +252,15 @@ def calculate_density(points_semantics, radius=0.1, n_jobs=-1):
     return results
 
 def pc_filter(points_semantics, semantics_attribute, upper_bound_threshold=None, lower_bound_threshold=None):
+    unique_semantics, counts = np.unique(points_semantics[:, 3], return_counts=True)
+    background_semantics = unique_semantics[np.argmax(counts)]
+
     if upper_bound_threshold is not None:
         print(f"Unique semantics IDs before upper bound filtering: {len(np.unique(points_semantics[:, 3]))}")
         to_remove = {semantics_id for semantics_id, attribute in semantics_attribute if attribute > upper_bound_threshold}  # remove semantics IDs with attribute above the upper bound threshold
         # Vectorized mask: True for rows to be removed
         mask = np.isin(points_semantics[:, 3], list(to_remove))
-        points_semantics[mask, 3] = -1
+        points_semantics[mask, 3] = background_semantics
         print(f"Unique semantics IDs after filtering: {len(np.unique(points_semantics[:, 3]))}")
 
     if lower_bound_threshold is not None:
@@ -152,7 +268,7 @@ def pc_filter(points_semantics, semantics_attribute, upper_bound_threshold=None,
         to_remove = {semantics_id for semantics_id, attribute in semantics_attribute if attribute < lower_bound_threshold}
         # Vectorized mask: True for rows to be removed
         mask = np.isin(points_semantics[:, 3], list(to_remove))
-        points_semantics[mask, 3] = -1
+        points_semantics[mask, 3] = background_semantics
         print(f"Unique semantics IDs after filtering: {len(np.unique(points_semantics[:, 3]))}")
 
     return points_semantics

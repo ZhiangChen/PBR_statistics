@@ -47,10 +47,12 @@ class RockAnnotationApp:
         self.panel.add_child(self.progress_label)
         self.label_buttons = gui.Vert()
         self.label_buttons.add_child(gui.Widget())  # flexible spacer pushes buttons to the bottom
+        annotation_labels = ['free_standing_rock', 'no_free_standing_rock', 'uncertain']
         # self.label_buttons.add_child(gui.Label(" "))  # Adds vertical spacer above buttons
-        for label_text in ["free-standing rock (q)", "no fs rock (w)", "uncertain (e)"]:
+        for i, label_text in enumerate(["free-standing rock (q)", "no fs rock (w)", "uncertain (e)"]):
             button = gui.Button(label_text.capitalize())
-            button.set_on_clicked(lambda text=label_text: self.on_label_click(text))
+            annotation_label = annotation_labels[i]
+            button.set_on_clicked(lambda text=annotation_label: self.on_label_click(text))
             self.label_buttons.add_child(button)
         
         back_button = gui.Button("Back")
@@ -147,6 +149,7 @@ class RockAnnotationApp:
             "note": note
         }])], ignore_index=True)
         self.df.to_csv(self.csv_file_path, index=False)
+        self.note_edit.text_value = ""
         self.index += 1
         self.load_current()
 
@@ -170,10 +173,46 @@ class RockAnnotationApp:
             self.df.to_csv(self.csv_file_path, index=False)
             self.load_current()
 
+def annotate_rock(las_file_path):
+    # check if the file exists
+    if not os.path.exists(las_file_path):
+        raise FileNotFoundError(f"The file {las_file_path} does not exist.")
+    else:
+        app = RockAnnotationApp(las_file_path)
+        gui.Application.instance.run()
+
+def filter_las_with_annotations(las_file_path, csv_file_path):
+    """
+    Filter the LAS file based on annotations in the CSV file.
+    """
+    if not os.path.exists(csv_file_path):
+        raise FileNotFoundError(f"The CSV file {csv_file_path} does not exist.")
+    
+    if not os.path.exists(las_file_path):
+        raise FileNotFoundError(f"The LAS file {las_file_path} does not exist.")
+    
+    df = pd.read_csv(csv_file_path)
+    points_semantics, colors = read_las_file(las_file_path)
+
+    unique_semantics, counts = np.unique(points_semantics[:, 3], return_counts=True)
+    background_semantics = unique_semantics[np.argmax(counts)]
+    
+    # Filter points based on annotations: set semantics_id to -1 for no_free_standing_rock annotations
+    for _, row in df.iterrows():
+        semantics_id = row['semantics_id']
+        if row['label'] == 'no_free_standing_rock':
+            points_semantics[points_semantics[:, 3] == semantics_id, 3] = background_semantics
+
+    # Save the filtered points back to a new LAS file
+    filtered_las_file_path = las_file_path.replace('.las', '_annotation.las')
+    save_points_to_las(points_semantics, colors, filtered_las_file_path)
+
+    print(f"Filtered LAS file saved to {filtered_las_file_path}")
+    
 
 if __name__ == "__main__":
-    las_file_path = 'data/mission_a_0_density_sor.las'
-    app = RockAnnotationApp(las_file_path)
-    gui.Application.instance.run()
-
+    las_file_path = 'data/mission_a_0_density_sor_annotation.las'
+    annotate_rock(las_file_path)
+    #csv_file_path = 'data/pc_objects/mission_a_0_density_sor.csv'
+    #filter_las_with_annotations(las_file_path, csv_file_path)
   

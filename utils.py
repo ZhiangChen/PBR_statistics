@@ -69,18 +69,23 @@ def read_las_files(file_paths):
         points_semantics_source, colors_source = read_las_file(file_path)
         # update points_semantics_source with semantics_N
         points_semantics_source[:, 3] += semantics_N
-        background_semantics.append(np.max(points_semantics_source[:, 3]))
-        semantics_N = np.max(points_semantics_source[:, 3]) + 1
+        
         points_semantics.append(points_semantics_source)
         colors.append(colors_source)
+
+        semantics_N = np.max(points_semantics_source[:, 3]) + 1
+        # unique with count
+        unique_semantics, counts = np.unique(points_semantics_source[:, 3], return_counts=True)
+        # get background semantics, which are the points with the largest count
+        background_semantics.append(unique_semantics[np.argmax(counts)])
 
     # concatenate all points_semantics and colors
     points_semantics = np.concatenate(points_semantics, axis=0)
     colors = np.concatenate(colors, axis=0)
 
     # reset the background semantics
-    for i in range(len(background_semantics)-1):
-        points_semantics[points_semantics[:, 3] == background_semantics[i], 3] = background_semantics[-1]
+    for i in range(len(background_semantics)):
+        points_semantics[points_semantics[:, 3] == background_semantics[i], 3] = -1
     
     return points_semantics, colors
 
@@ -137,7 +142,7 @@ def save_points_to_las(points, color, filename):
 
     if len(semantics[semantics == max_intensity]) < len(semantics)/10:
         semantics[semantics == -1] = max_intensity + 1 
-        print(f"Max intensity: {max_intensity + 1}")
+        print(f"Max intensity + 1: {max_intensity + 1}")
     else:
         semantics[semantics == -1] = max_intensity 
         print(f"Max intensity: {max_intensity}")
