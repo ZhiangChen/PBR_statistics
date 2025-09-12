@@ -374,7 +374,7 @@ def plot_photos_on_map(photo_folder, map_type='both', output_dir='utils',
 # Example usage:
 if __name__ == "__main__":
     # Example 1: Using a folder path
-    photo_folder = "/Volumes/Extreme SSD/zhiang/manual"
+    photo_folder = "/Volumes/Extreme SSD/zhiang/cb_2025/we_90"
     plot_photos_on_map(photo_folder, map_type='both', output_dir='utils')
     
     # Example 2: Using a list of photo paths
