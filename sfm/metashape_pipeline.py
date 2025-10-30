@@ -2,8 +2,8 @@ import Metashape
 import os
 import glob
 from pathlib import Path
-from datetime import datetime
 import re
+import time
 
 # ANSI color codes for colored output
 class Colors:
@@ -27,7 +27,7 @@ def setup_log(output_folder, project_name):
     log_file_handle = open(log_path, 'w', encoding='utf-8')
     
     # Write header
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     log_file_handle.write(f"=== Metashape Pipeline Log - {timestamp} ===\n")
     log_file_handle.flush()
     return log_path
@@ -36,7 +36,7 @@ def close_log():
     """Close the log file"""
     global log_file_handle
     if log_file_handle:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         log_file_handle.write(f"\n=== Log ended - {timestamp} ===\n")
         log_file_handle.close()
         log_file_handle = None
@@ -59,6 +59,17 @@ def generate_highest_quality_dense_cloud(image_folder, output_folder, project_na
         output_folder: Path to folder for outputs 
         project_name: Name for the project files
     """
+    
+    # # Enable GPU usage
+    # log_and_print(f"{Colors.CYAN}Enabling GPU acceleration...{Colors.ENDC}")
+    # Metashape.app.gpu_mask = 2 ** len(Metashape.app.enumGPUDevices()) - 1  # Enable all available GPUs
+    # Metashape.app.cpu_enable = False  # Keep CPU enabled for hybrid processing
+    
+    # # Log GPU information
+    # gpu_devices = Metashape.app.enumGPUDevices()
+    # log_and_print(f"{Colors.GREEN}Available GPU devices: {len(gpu_devices)}{Colors.ENDC}")
+    # for i, device in enumerate(gpu_devices):
+    #     log_and_print(f"{Colors.CYAN}  GPU {i}: {device['name']} ({device['vendor']}){Colors.ENDC}")
     
     # Create output folder if it doesn't exist
     output_folder = Path(output_folder)
@@ -99,12 +110,12 @@ def generate_highest_quality_dense_cloud(image_folder, output_folder, project_na
     # Step 2: Align photos with HIGHEST quality settings
     log_and_print(f"{Colors.BLUE}Step 2: Aligning photos (HIGHEST quality)...{Colors.ENDC}")
     chunk.matchPhotos(
-        downscale=1,  # 1=Highest quality (no downscaling)
+        downscale=0,  # 0=Highest quality (no downscaling)
         generic_preselection=True,
-        reference_preselection=False,
+        reference_preselection=True,
         filter_mask=False,
         mask_tiepoints=False,
-        filter_stationary_points=True,
+        filter_stationary_points=False,
         keypoint_limit=40000,  # Increased for highest quality
         tiepoint_limit=4000,   # Increased for highest quality
         keep_keypoints=False,
@@ -114,7 +125,7 @@ def generate_highest_quality_dense_cloud(image_folder, output_folder, project_na
     
     chunk.alignCameras(
         adaptive_fitting=True,
-        reset_alignment=True
+        #reset_alignment=True
     )
     
     # Check if alignment was successful
@@ -226,11 +237,12 @@ def generate_highest_quality_dense_cloud(image_folder, output_folder, project_na
     log_and_print(f"{Colors.BLUE}Step 4: Building depth maps (HIGHEST quality)...{Colors.ENDC}")
     chunk.buildDepthMaps(
         downscale=1,  # 1=Highest quality (no downscaling)
-        filter_mode=Metashape.NoFiltering,  # No filtering for maximum detail
-        max_neighbors=100,  # Maximum neighbors for best quality
-        subdivide_task=True,
-        workitem_size_cameras=20,
-        max_workgroup_size=100
+        filter_mode=Metashape.MildFiltering,  # Mild filtering for better detail
+        reuse_depth=True,
+        #max_neighbors=40,  # Maximum neighbors for best quality
+        #subdivide_task=True,
+        #workitem_size_cameras=60,
+        #max_workgroup_size=100
     )
     
     # Step 5: Build dense cloud with HIGHEST quality
@@ -246,14 +258,15 @@ def generate_highest_quality_dense_cloud(image_folder, output_folder, project_na
         return False
     
     chunk.buildPointCloud(
-        source_data=Metashape.DataSource.DepthMapsData,  # REQUIRED
-        point_colors=True,
-        point_confidence=True,  # Enable confidence for quality filtering
-        keep_depth=True,        # Keep depth maps for reference
-        max_neighbors=100,      # Maximum neighbors for best quality
-        subdivide_task=True,
-        workitem_size_cameras=20,
-        max_workgroup_size=100
+        #source_data=Metashape.DataSource.DepthMapsData,  # REQUIRED
+        #point_colors=True,
+        #point_confidence=True,  # Enable confidence for quality filtering
+        #keep_depth=True,        # Keep depth maps for reference
+        #max_neighbors=80,       # Maximum neighbors for best quality
+        #uniform_sampling=False,
+        #subdivide_task=True,
+        #workitem_size_cameras=60,
+        #max_workgroup_size=100
     )
     
     # Check if dense cloud was created
